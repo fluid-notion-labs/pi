@@ -493,6 +493,7 @@ export class AgentSession {
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
+		this._seedUsedModelsFromSettings();
 		this._cacheWarmer = config.cacheWarmer;
 		if (this._cacheWarmer) {
 			this._cacheWarmer.onWarmed = (entry) => this._emit({ type: "entry_appended", entry });
@@ -2520,10 +2521,29 @@ export class AgentSession {
 
 	/**
 	 * Record a model selection for quick switching. Most recent first, deduped by provider/id.
+	 * Persists to global settings so the history survives across sessions.
 	 */
 	private _recordUsedModel(model: Model<any>, thinkingLevel?: ThinkingLevel): void {
 		this._usedModels = this._usedModels.filter((used) => !modelsAreEqual(used.model, model));
 		this._usedModels.unshift({ model, thinkingLevel });
+		this.settingsManager.addRecentModel(model.provider, model.id);
+	}
+
+	/** Restore the persisted recently used models (MRU first) into memory. */
+	private _seedUsedModelsFromSettings(): void {
+		for (const reference of this.settingsManager.getRecentModels()) {
+			const separatorIndex = reference.indexOf("/");
+			if (separatorIndex <= 0) continue;
+			const provider = reference.slice(0, separatorIndex);
+			const modelId = reference.slice(separatorIndex + 1);
+			if (!provider || !modelId) continue;
+			const model = this._modelRuntime.getModel(provider, modelId);
+			if (!model) continue;
+			this._usedModels.push({ model });
+		}
+		this._usedModels = this._usedModels.filter(
+			(used, index) => this._usedModels.findIndex((other) => modelsAreEqual(other.model, used.model)) === index,
+		);
 	}
 
 	/**

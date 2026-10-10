@@ -20,6 +20,8 @@ export interface CompactionModelOverride {
 	keepRecentTokens?: number;
 }
 
+const RECENT_MODELS_LIMIT = 10;
+
 const DEFAULT_COMPACTION_TOKEN_SETTINGS: Required<CompactionModelOverride> = {
 	reserveTokens: 16384,
 	keepRecentTokens: 20000,
@@ -165,6 +167,7 @@ export interface Settings {
 	terminal?: TerminalSettings;
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
+	recentModels?: string[]; // Recently used models for quick switching (Ctrl+P), MRU first, "provider/modelId"
 	defaultTools?: string[]; // Initial tool selection; `+name`/`-name` entries add to or remove from the inherited selection
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
@@ -847,6 +850,19 @@ export class SettingsManager {
 		this.globalSettings.defaultModel = modelId;
 		this.markModified("defaultProvider");
 		this.markModified("defaultModel");
+		this.save();
+	}
+
+	getRecentModels(): string[] {
+		const value = this.globalSettings.recentModels;
+		return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+	}
+
+	addRecentModel(provider: string, modelId: string): void {
+		const reference = `${provider}/${modelId}`;
+		const current = this.getRecentModels().filter((entry) => entry !== reference);
+		this.globalSettings.recentModels = [reference, ...current].slice(0, RECENT_MODELS_LIMIT);
+		this.markModified("recentModels");
 		this.save();
 	}
 
