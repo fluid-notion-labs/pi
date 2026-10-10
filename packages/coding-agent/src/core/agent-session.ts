@@ -381,6 +381,8 @@ export class AgentSession {
 	readonly settingsManager: SettingsManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Recently used models, most recent first. Quick switching (Ctrl+P) cycles this list. */
+	private _usedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> = [];
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -1663,6 +1665,11 @@ export class AgentSession {
 		return this._scopedModels;
 	}
 
+	/** Recently used models, most recent first; quick switching cycles this list */
+	get usedModels(): ReadonlyArray<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> {
+		return this._usedModels;
+	}
+
 	/** Update scoped models for cycling */
 	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>): void {
 		this._scopedModels = scopedModels;
@@ -2482,6 +2489,7 @@ export class AgentSession {
 		const previousModel = this.model;
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
 		this.agent.state.model = model;
+		this._recordUsedModel(model, thinkingLevel);
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
@@ -2511,8 +2519,18 @@ export class AgentSession {
 	}
 
 	/**
+	 * Record a model selection for quick switching. Most recent first, deduped by provider/id.
+	 */
+	private _recordUsedModel(model: Model<any>, thinkingLevel?: ThinkingLevel): void {
+		this._usedModels = this._usedModels.filter((used) => !modelsAreEqual(used.model, model));
+		this._usedModels.unshift({ model, thinkingLevel });
+	}
+
+	/**
 	 * Cycle to next/previous model.
-	 * Uses scoped models (from --models flag) if available, otherwise all available models.
+	 * Quick switching cycles the recently used models only. Until at least two models have been
+	 * used (via /model or setModel), it falls back to scoped models (from --models flag) if
+	 * available, otherwise all available models.
 	 * @param direction - "forward" (default) or "backward"
 	 * @returns The new model info, or undefined if only one model available
 	 */
@@ -2520,10 +2538,60 @@ export class AgentSession {
 		direction: "forward" | "backward" = "forward",
 		options: ModelMutationOptions = {},
 	): Promise<ModelCycleResult | undefined> {
+		if (this._usedModels.length === 0 && this.model) {
+			this._recordUsedModel(this.model);
+		}
+		const usedResult = await this._cycleUsedModel(direction, options);
+		if (usedResult || this._usedModels.length > 1) return usedResult;
 		if (this._scopedModels.length > 0) {
 			return this._cycleScopedModel(direction, options);
 		}
 		return this._cycleAvailableModel(direction, options);
+	}
+
+	/**
+	 * Cycle through the recently used models, most recent first. Forward moves to the next-older
+	 * used model; backward moves back toward the most recent. Cycling does not update recency, so
+	 * repeated Ctrl+P walks the whole history instead of toggling between two models.
+	 */
+	private async _cycleUsedModel(
+		direction: "forward" | "backward",
+		options: ModelMutationOptions,
+	): Promise<ModelCycleResult | undefined> {
+		const availableIds = new Set(
+			this._modelRuntime.getAvailableSnapshot().map((model) => `${model.provider}\0${model.id}`),
+		);
+		const usedModels = this._usedModels.filter((used) =>
+			availableIds.has(`${used.model.provider}\0${used.model.id}`),
+		);
+		if (usedModels.length <= 1) return undefined;
+
+		const currentModel = this.model;
+		let currentIndex = usedModels.findIndex((used) => modelsAreEqual(used.model, currentModel));
+
+		if (currentIndex === -1) currentIndex = 0;
+		const len = usedModels.length;
+		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
+		const next = usedModels[nextIndex];
+		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.model, next.thinkingLevel);
+
+		// Apply model
+		this.agent.state.model = next.model;
+		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
+		if (options.persist) {
+			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+			this._addPersistedDefaultToNonEmptyScope(next.model);
+		}
+
+		// Apply thinking level for the new model.
+		// - Used-model thinking level overrides defaults
+		// - Per-model thinking level overrides take priority over the global default
+		// setThinkingLevel clamps to model capabilities.
+		this.setThinkingLevel(thinkingLevel);
+
+		await this._emitModelSelect(next.model, currentModel, "cycle");
+
+		return { model: next.model, thinkingLevel: this.thinkingLevel, isScoped: false };
 	}
 
 	private async _cycleScopedModel(

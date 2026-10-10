@@ -153,6 +153,7 @@ import { FooterComponent, formatTokens } from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
+import { ModelCycleOverlay } from "./components/model-cycle.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
 import {
 	type AuthSelectorProvider,
@@ -3100,8 +3101,8 @@ export class InteractiveMode {
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
 		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
 		this.defaultEditor.onAction("app.thinking.cycle", () => this.cycleThinkingLevel());
-		this.defaultEditor.onAction("app.model.cycleForward", () => this.cycleModel("forward"));
-		this.defaultEditor.onAction("app.model.cycleBackward", () => this.cycleModel("backward"));
+		this.defaultEditor.onAction("app.model.cycleForward", () => this.showModelCycleOverlay("forward"));
+		this.defaultEditor.onAction("app.model.cycleBackward", () => this.showModelCycleOverlay("backward"));
 
 		// Global debug handler on TUI (works regardless of focus)
 		this.ui.onDebug = () => this.handleDebugCommand();
@@ -4532,6 +4533,70 @@ export class InteractiveMode {
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
 			this.showStatus(`Thinking level: ${newLevel}`);
+		}
+	}
+
+	/**
+	 * Shows the quick-switch modal while the cycle key is held. The modal sits above the input
+	 * line and lists recently used models, most recent first. The highlighted model is only
+	 * applied when the key is released.
+	 */
+	private showModelCycleOverlay(direction: "forward" | "backward"): void {
+		const availableIds = new Set(
+			this.session.modelRuntime.getAvailableSnapshot().map((model) => `${model.provider}\0${model.id}`),
+		);
+		const models = this.session.usedModels.filter((used) =>
+			availableIds.has(`${used.model.provider}\0${used.model.id}`),
+		);
+		if (models.length <= 1) {
+			// Nothing to choose among; keep the direct-cycle behavior.
+			void this.cycleModel(direction);
+			return;
+		}
+
+		this.disposeActiveSelector();
+		const token = {};
+		let closed = false;
+		const finish = () => {
+			if (closed) return;
+			closed = true;
+			if (this.activeSelectorToken !== token) return;
+			this.activeSelectorToken = undefined;
+			this.activeSelectorDispose = undefined;
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.editor);
+			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
+		};
+		const overlay = new ModelCycleOverlay(
+			this.ui,
+			models,
+			this.session.model,
+			(model) => {
+				finish();
+				void this.selectModelFromCycle(model);
+			},
+			finish,
+		);
+		this.activeSelectorToken = token;
+		this.activeSelectorDispose = undefined;
+		this.editorContainer.clear();
+		this.editorContainer.addChild(overlay);
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(overlay);
+		this.ui.requestRender();
+	}
+
+	private async selectModelFromCycle(model: Model<any>): Promise<void> {
+		try {
+			await this.session.setModel(model);
+			this.updateAvailableProviderCount();
+			this.footer.invalidate();
+			this.updateEditorBorderColor();
+			this.showStatus(`Model: ${model.id}`);
+			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 
