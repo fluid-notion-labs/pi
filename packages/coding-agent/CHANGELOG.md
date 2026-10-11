@@ -5,6 +5,7 @@
 ### Changed
 
 - Changed the `showHardwareCursor` setting to use only the terminal cursor instead of also drawing Pi's reverse-video cursor
+- Made the footer context indicator warning levels configurable: `warnings.contextYellowPercent` and `warnings.contextRedPercent` are percentages of the context window used (defaults 10 and 15)
 
 ## [1.1.0] - 2026-10-07
 

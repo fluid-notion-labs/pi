@@ -91,6 +91,8 @@ export interface MarkdownSettings {
 
 export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
+	contextYellowPercent?: number; // default: 10 - footer context indicator turns yellow above this percentage of the context window used
+	contextRedPercent?: number; // default: 15 - footer context indicator turns red above this percentage of the context window used
 }
 
 /**
@@ -1080,6 +1082,14 @@ export class SettingsManager {
 
 	getWebSocketConnectTimeoutMs(): number | undefined {
 		return parseTimeoutSetting(this.settings.websocketConnectTimeoutMs, "websocketConnectTimeoutMs");
+	}
+
+	getContextYellowPercent(): number {
+		return this.settings.warnings?.contextYellowPercent ?? 10;
+	}
+
+	getContextRedPercent(): number {
+		return this.settings.warnings?.contextRedPercent ?? 15;
 	}
 
 	getHideThinkingBlock(): boolean {

@@ -202,9 +202,12 @@ export class FooterComponent implements Component {
 			contextPercent === "?"
 				? `?/${formatTokens(contextWindow)}${autoIndicator}`
 				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
-		if (contextPercentValue > 90) {
+		// Thresholds are percentages of the context window used.
+		const contextYellowPercent = this.session.settingsManager.getContextYellowPercent();
+		const contextRedPercent = this.session.settingsManager.getContextRedPercent();
+		if (contextPercentValue > contextRedPercent) {
 			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
+		} else if (contextPercentValue > contextYellowPercent) {
 			contextPercentStr = theme.fg("warning", contextPercentDisplay);
 		} else {
 			contextPercentStr = contextPercentDisplay;
